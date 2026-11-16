@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>览 · 首页</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: #EAF2FB; color: #1F2937; min-height: 100vh; }
+  .hero { padding: 40px 20px 26px; text-align: center; }
+  .hero h1 { font-size: 58px; letter-spacing: 10px; font-weight: 600; line-height: 1.1; }
+  .hero .sub { margin-top: 8px; font-size: 13px; opacity: .75; letter-spacing: 2px; }
+  #clock { margin-top: 10px; }
+  #clock .t { font-size: 30px; font-weight: 600; letter-spacing: 2px; }
+  #clock .d { font-size: 12px; opacity: .7; margin-top: 2px; }
+  .search { display: flex; background: #fff; border: 1.5px solid #CBD5E1; border-radius: 28px; padding: 4px; box-shadow: 0 2px 12px rgba(59,130,196,.08); margin: 20px 20px 0; }
+  .search input { flex: 1; height: 44px; border: none; background: transparent; padding: 0 8px 0 16px; font-size: 16px; outline: none; min-width: 0; }
+  .search button { height: 44px; padding: 0 24px; border: none; border-radius: 24px; background: #3B82C4; color: #fff; font-size: 16px; flex-shrink: 0; }
+  .section { padding: 22px 20px 0; }
+  .section h2 { font-size: 15px; color: #64748B; margin-bottom: 12px; font-weight: 600; }
+  .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .grid a { text-decoration: none; display: block; }
+  .tile { background: #fff; border: 1px solid #E2E8F0; border-radius: 16px; padding: 14px 6px 12px; text-align: center; font-size: 13px; color: #334155; }
+  .tile .ic { width: 42px; height: 42px; line-height: 42px; border-radius: 12px; background: #F1F5F9; color: #3B82C4; font-size: 19px; margin: 0 auto 8px; }
+  .tile:active { background: #F0F7FD; }
+  .list a { display: flex; justify-content: space-between; background: #fff; border: 1px solid #E2E8F0; border-radius: 12px; padding: 13px 14px; margin-bottom: 8px; color: #334155; text-decoration: none; font-size: 14px; }
+  .list a span:last-child { color: #94A3B8; font-size: 12px; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .foot { text-align: center; color: #94A3B8; font-size: 12px; padding: 26px 0 30px; }
+  .foot a.extbtn { display: inline-block; margin: 10px 6px 0; border: 1px solid #3B82C4; color: #3B82C4; background: #fff; border-radius: 18px; padding: 8px 18px; font-size: 13px; text-decoration: none; }
+  .empty { color: #94A3B8; font-size: 13px; padding: 6px 0; }
+
+  /* 雾蓝（默认）：雾色渐变 + 玻璃搜索 */
+  body.wulan { background: #EAF2FB; }
+  body.wulan .hero { background: linear-gradient(170deg, #DCE9F7, #EAF2FB 70%); color: #1E3A5F; }
+  body.wulan .hero h1 { color: #1E3A5F; }
+  body.wulan .search { border-color: #C7DBF0; box-shadow: 0 2px 12px rgba(59,130,196,.14); }
+  body.wulan .search button { background: #3B82C4; }
+  body.wulan .tile .ic { background: #EAF2FB; color: #3B82C4; }
+  body.wulan .foot a.extbtn { border-color: #3B82C4; color: #3B82C4; }
+
+  /* 墨夜：近黑底 + 琥珀字 */
+  body.moye { background: #14161A; color: #E5E7EB; }
+  body.moye .hero { background: #14161A; color: #F5F5F4; }
+  body.moye .hero h1 { color: #E8A33D; }
+  body.moye .search { background: #1F232A; border-color: #2E333D; }
+  body.moye .search input { color: #F5F5F4; }
+  body.moye .search button { background: #E8A33D; color: #1C1917; }
+  body.moye .section h2 { color: #9CA3AF; }
+  body.moye .tile { background: #1F232A; border-color: #2E333D; color: #E5E7EB; }
+  body.moye .tile .ic { background: #2A2118; color: #E8A33D; }
+  body.moye .list a { background: #1F232A; border-color: #2E333D; color: #E5E7EB; }
+  body.moye .foot { color: #6B7280; }
+  body.moye .foot a.extbtn { border-color: #E8A33D; color: #E8A33D; background: transparent; }
+  body.moye .empty { color: #6B7280; }
+
+  /* 星野：深蓝星空 + 星点 */
+  body.xingye { background: #101736; color: #E0E7FF; background-image: radial-gradient(1.5px 1.5px at 20% 30%, #fff 50%, transparent 51%), radial-gradient(1px 1px at 70% 15%, #fff 50%, transparent 51%), radial-gradient(1.5px 1.5px at 85% 55%, #C7D2FE 50%, transparent 51%), radial-gradient(1px 1px at 40% 70%, #fff 50%, transparent 51%), radial-gradient(1.5px 1.5px at 55% 85%, #C7D2FE 50%, transparent 51%); }
+  body.xingye .hero { background: transparent; color: #E0E7FF; }
+  body.xingye .hero h1 { color: #C7D2FE; }
+  body.xingye .search { background: rgba(255,255,255,.08); border-color: rgba(199,210,254,.4); }
+  body.xingye .search input { color: #E0E7FF; }
+  body.xingye .search input::placeholder { color: #93A4D8; }
+  body.xingye .search button { background: #8B9CF9; }
+  body.xingye .section h2 { color: #93A4D8; }
+  body.xingye .tile { background: rgba(255,255,255,.06); border-color: rgba(199,210,254,.25); color: #E0E7FF; }
+  body.xingye .tile .ic { background: rgba(139,156,249,.25); color: #C7D2FE; }
+  body.xingye .list a { background: rgba(255,255,255,.06); border-color: rgba(199,210,254,.25); color: #E0E7FF; }
+  body.xingye .foot { color: #93A4D8; }
+  body.xingye .foot a.extbtn { border-color: #8B9CF9; color: #C7D2FE; background: transparent; }
+  body.xingye .empty { color: #93A4D8; }
+
+  /* 青瓷：瓷青底 + 深绿字 */
+  body.qingci { background: #EAF3EE; }
+  body.qingci .hero { background: linear-gradient(170deg, #DCEDE3, #EAF3EE 70%); color: #1F3D2E; }
+  body.qingci .hero h1 { color: #2F5D46; }
+  body.qingci .search { border-color: #BFDACB; box-shadow: 0 2px 12px rgba(78,138,110,.12); }
+  body.qingci .search button { background: #4E8A6E; }
+  body.qingci .tile .ic { background: #EAF3EE; color: #4E8A6E; }
+  body.qingci .foot a.extbtn { border-color: #4E8A6E; color: #4E8A6E; }
+
+  /* 暮山：暮色渐变 + 暖字 */
+  body.mushan { background: #F7E8E0; }
+  body.mushan .hero { background: linear-gradient(170deg, #F6C89F, #E98A7A 55%, #8E6BB8); color: #fff; }
+  body.mushan .hero h1 { color: #fff; text-shadow: 0 2px 12px rgba(0,0,0,.18); }
+  body.mushan .search { border-color: #F0C9B8; }
+  body.mushan .search button { background: #C65D3B; }
+  body.mushan .tile { background: #FFF9F5; border-color: #F0D9CE; }
+  body.mushan .tile .ic { background: #FBE9E0; color: #C65D3B; }
+  body.mushan .foot a.extbtn { border-color: #C65D3B; color: #C65D3B; }
+
+  /* 纸鸢：暖纸底 + 朱红字 */
+  body.zhiyuan { background: #FBF3E4; }
+  body.zhiyuan .hero { background: #FBF3E4; color: #3F2E1F; }
+  body.zhiyuan .hero h1 { color: #C0392B; }
+  body.zhiyuan .search { border: none; border-bottom: 2px solid #E3C98F; border-radius: 0; background: transparent; box-shadow: none; padding: 4px 0; }
+  body.zhiyuan .search button { background: #C0392B; border-radius: 8px; }
+  body.zhiyuan .tile { background: transparent; border: none; border-bottom: 1px solid #EADFC6; border-radius: 0; }
+  body.zhiyuan .tile .ic { background: transparent; color: #C0392B; }
+  body.zhiyuan .list a { background: transparent; border: none; border-bottom: 1px solid #EADFC6; border-radius: 0; }
+  body.zhiyuan .foot a.extbtn { border-color: #C0392B; color: #C0392B; }
+
+  /* 素白：纯白 + 细线 */
+  body.subai { background: #fff; }
+  body.subai .hero { background: #fff; color: #111; }
+  body.subai .hero h1 { font-size: 40px; letter-spacing: 12px; font-weight: 400; }
+  body.subai .search { border: none; border-bottom: 1px solid #E5E7EB; border-radius: 0; box-shadow: none; padding: 4px 0; }
+  body.subai .search button { display: none; }
+  body.subai .section h2 { font-size: 12px; letter-spacing: 2px; }
+  body.subai .tile { border: none; }
+  body.subai .tile .ic { background: transparent; color: #9CA3AF; font-size: 15px; width: auto; height: auto; line-height: 1; }
+  body.subai .list a { border: none; border-bottom: 1px solid #F3F4F6; border-radius: 0; }
+  body.subai .foot a.extbtn { border: none; color: #9CA3AF; }
+</style>
+</head>
+<body>
+  <div class="hero">
+    <h1>览</h1>
+    <div id="clock"><div class="t">--:--</div><div class="d"></div></div>
+    <div class="sub">轻 快 干 净</div>
+  </div>
+
+  <!-- 搜索用原生 form 提交，不走 JS 桥，桥坏了也能搜 -->
+  <form class="search" id="searchForm" action="https://www.bing.com/search" method="get">
+    <input id="q" name="q" type="search" placeholder="搜索网页" enterkeyhint="search">
+    <button type="submit">搜索</button>
+  </form>
+
+  <div class="section" id="funcSection">
+    <h2>常用功能</h2>
+    <div class="grid">
+      <a class="tile" href="lan://extensions"><div class="ic">扩</div>扩展</a>
+      <a class="tile" href="lan://video-settings"><div class="ic">播</div>视频播放</a>
+      <a class="tile" href="lan://home-settings"><div class="ic">设</div>主页设置</a>
+      <a class="tile" href="lan://downloads"><div class="ic">载</div>下载</a>
+      <a class="tile" href="lan://bookmarks"><div class="ic">签</div>书签</a>
+      <a class="tile" href="lan://history"><div class="ic">史</div>历史</a>
+      <a class="tile" href="lan://log"><div class="ic">志</div>日志</a>
+      <a class="tile" href="lan://check-update"><div class="ic">更</div>检查更新</a>
+    </div>
+  </div>
+
+  <div class="section" id="tilesSection">
+    <h2>快捷方式</h2>
+    <div class="grid" id="tiles"></div>
+  </div>
+
+  <div class="section" id="recentSection">
+    <h2>最近访问</h2>
+    <div class="list" id="recent"></div>
+  </div>
+
+  <div class="foot">
+    <div id="ver"></div>
+  </div>
+
+<script>
+  function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+  var defaults = [
+    {title:'必应', url:'https://www.bing.com'},
+    {title:'哔哩哔哩', url:'https://www.bilibili.com'},
+    {title:'知乎', url:'https://www.zhihu.com'},
+    {title:'NodeSeek', url:'https://www.nodeseek.com'},
+    {title:'GitHub', url:'https://github.com'},
+    {title:'微博', url:'https://weibo.com'},
+    {title:'豆瓣', url:'https://www.douban.com'},
+    {title:'百度', url:'https://www.baidu.com'}
+  ];
+
+  function renderTiles(items){
+    var html = '';
+    items.slice(0, 8).forEach(function(it){
+      var ch = (it.title || '?').charAt(0);
+      // 快捷方式用原生 <a> 直跳，不走 JS 桥
+      html += '<a class="tile" href="' + esc(it.url) + '"><div class="ic">' + esc(ch) + '</div>' + esc(it.title) + '</a>';
+    });
+    document.getElementById('tiles').innerHTML = html;
+  }
+
+  function renderRecent(items){
+    var box = document.getElementById('recent');
+    if(!items || !items.length){ box.innerHTML = '<div class="empty">还没有浏览记录</div>'; return; }
+    var html = '';
+    items.slice(0, 8).forEach(function(it){
+      html += '<a href="' + esc(it.url) + '"><span>' + esc(it.title || it.url) + '</span><span>' + esc(it.url) + '</span></a>';
+    });
+    box.innerHTML = html;
+  }
+
+  function tickClock(){
+    var now = new Date();
+    var t = document.querySelector('#clock .t');
+    if(t){
+      var h = String(now.getHours()).padStart(2, '0');
+      var m = String(now.getMinutes()).padStart(2, '0');
+      t.textContent = h + ':' + m;
+      var w = ['星期日','星期一','星期二','星期三','星期四','星期五','星期六'][now.getDay()];
+      document.querySelector('#clock .d').textContent = (now.getMonth()+1) + '月' + now.getDate() + '日 · ' + w;
+    }
+  }
+  tickClock();
+  setInterval(tickClock, 20000);
+
+  try {
+    if(window.Lan){
+      document.body.className = window.Lan.homeStyle() || 'wulan';
+      // 搜索框按主页设置里的搜索引擎走（桥坏了就默认必应）
+      try {
+        var eng = window.Lan.searchEngine() || 'bing';
+        var form = document.getElementById('searchForm');
+        var input = document.getElementById('q');
+        if(eng === 'baidu'){ form.action = 'https://www.baidu.com/s'; input.name = 'wd'; }
+        else if(eng === 'google'){ form.action = 'https://www.google.com/search'; input.name = 'q'; }
+        else { form.action = 'https://www.bing.com/search'; input.name = 'q'; }
+      } catch(e2){}
+      if(window.Lan.showTiles() === 'false'){ document.getElementById('tilesSection').style.display = 'none'; }
+      if(window.Lan.showRecent() === 'false'){ document.getElementById('recentSection').style.display = 'none'; }
+      var links = JSON.parse(window.Lan.quickLinks() || '[]');
+      renderTiles(links.length ? links : defaults);
+      renderRecent(JSON.parse(window.Lan.recent() || '[]'));
+      document.getElementById('ver').textContent = '览 ' + window.Lan.version() + ' · Chrome 内核';
+    } else {
+      document.body.className = 'wulan';
+      renderTiles(defaults);
+      renderRecent([]);
+      document.getElementById('ver').textContent = '览 · Chrome 内核';
+    }
+  } catch(e){
+    document.body.className = 'wulan';
+    renderTiles(defaults);
+    renderRecent([]);
+  }
+</script>
+</body>
+</html>

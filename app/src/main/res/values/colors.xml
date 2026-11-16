@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="teal">#0E7490</color>
+    <color name="teal_dark">#155E75</color>
+    <color name="bar_bg">#FFFFFF</color>
+    <color name="bar_text">#1F2937</color>
+    <color name="hint">#9CA3AF</color>
+</resources>
