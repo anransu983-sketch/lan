@@ -196,7 +196,7 @@ class SmartDownloaderSheet(
                 ).apply { bottomMargin = dp(12) }
             }
             val name = TextView(activity).apply {
-                text = v.url.substringAfterLast("/").substringBefore("?").ifBlank { v.url }
+                text = v.displayName()
                 textSize = 15f
                 setTextColor(0xFF111111.toInt())
                 maxLines = 2
@@ -207,7 +207,9 @@ class SmartDownloaderSheet(
                 ""
             }
             val meta = TextView(activity).apply {
-                text = "${v.via} · ${formatSize(v.sizeBytes)} · $host"
+                // m3u8 是播放列表，HEAD 测到的只是列表本身大小，没有意义，标合并下载
+                text = if (v.isPlaylist) "${v.via} · m3u8 合并下载 · $host"
+                else "${v.via} · ${formatSize(v.sizeBytes)} · $host"
                 textSize = 12f
                 setTextColor(0xFF6B7280.toInt())
                 setPadding(0, dp(4), 0, dp(10))
@@ -242,17 +244,21 @@ class SmartDownloaderSheet(
     }
 
     private fun sortedVideos(): List<SniffedVideo> {
-        val list = getVideos()
+        // 0.7.1：m3u8 播放列表永远排最前面（点它就是合并下载整片）
+        val list = getVideos().sortedByDescending { it.isPlaylist }
         return if (sortMode == "size") {
-            list.sortedWith(compareByDescending<SniffedVideo> { it.sizeBytes >= 0 }.thenByDescending { it.sizeBytes })
+            list.sortedWith(
+                compareByDescending<SniffedVideo> { it.isPlaylist }
+                    .thenByDescending { it.sizeBytes >= 0 }.thenByDescending { it.sizeBytes }
+            )
         } else {
             list
         }
     }
 
-    /** 没测过大小的，HEAD 测 Content-Length，回来刷新列表 */
+    /** 没测过大小的，HEAD 测 Content-Length，回来刷新列表（m3u8 不测，列表大小无意义） */
     private fun fetchSizes() {
-        val pending = getVideos().filter { it.sizeBytes < 0 }
+        val pending = getVideos().filter { it.sizeBytes < 0 && !it.isPlaylist }
         if (pending.isEmpty()) return
         Thread {
             for (v in pending) {

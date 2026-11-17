@@ -1,6 +1,6 @@
 # 览 Lan — Chrome 内核浏览器（系统 WebView 壳）
 
-包名 `com.suanran.lan`，v0.7.0 (10)。
+包名 `com.suanran.lan`，v0.7.1 (11)。
 
 ## 内核说明
 

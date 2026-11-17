@@ -80,6 +80,9 @@ class MainActivity : ComponentActivity() {
 
     /** 视频嗅探：每标签页抓到的直链（m3u8/mp4 等） */
     private val sniffedByTab = mutableMapOf<Tab, MutableList<SniffedVideo>>()
+
+    /** 每标签页是否只抓到过 HLS 分片（分片不进列表，见 addSniffed） */
+    private val segmentSeenByTab = HashMap<Tab, Boolean>()
     private lateinit var sniffBtn: Button
 
     /** 智能播放器弹窗 + 分站自动打开去重 */
@@ -307,6 +310,9 @@ class MainActivity : ComponentActivity() {
         applyUa(wv)
         wv.addJavascriptInterface(LanBridge(), "Lan")
         wv.addJavascriptInterface(VideoStateBridge(wv), "LanVideo")
+        // 0.7.1：嗅探桥。hook 脚本把 fetch/XHR 里出现的视频地址报回来，
+        // 专门抓 playurl 这类 JSON 接口里回的 play_url（拦截层看不到响应体）。
+        wv.addJavascriptInterface(SniffBridge(wv), "LanSniff")
         CookieManager.getInstance().setAcceptCookie(true)
         CookieManager.getInstance().setAcceptThirdPartyCookies(wv, true)
 
@@ -368,6 +374,7 @@ class MainActivity : ComponentActivity() {
                     // 跳到新页面：上页抓到的视频清空，「当前页面视频」只算本页的
                     if (url != tab.url) {
                         sniffedByTab.remove(tab)
+                        segmentSeenByTab.remove(tab)
                         videoPlayingByTab[tab] = false
                         if (tab == activeTab) {
                             smartSheet?.dismiss()
@@ -395,6 +402,9 @@ class MainActivity : ComponentActivity() {
                 ExtensionManager.inject(view, url)
                 scanVideoTags(view)
                 if (!url.startsWith("file://")) hookVideoState(view)
+                // 0.7.1：每次页面加载完都注入嗅探钩子（SPA 同文档内路由跳转不重载，
+                // 钩子挂在 fetch/XHR 原型上，一次注入后续路由也生效；跨域 iframe 靠拦截层兜底）
+                if (!url.startsWith("file://")) injectSniffHook(view)
                 if (tab == activeTab) updateUi()
                 saveSession()
             }
@@ -497,6 +507,7 @@ class MainActivity : ComponentActivity() {
         val index = tabs.indexOf(tab)
         tabs.remove(tab)
         sniffedByTab.remove(tab)
+        segmentSeenByTab.remove(tab)
         videoPlayingByTab.remove(tab)
         container.removeView(tab.webView)
         tab.webView.destroy()
@@ -558,9 +569,9 @@ class MainActivity : ComponentActivity() {
     private fun showMenu() {
         menuSheet?.dismiss()
         val ver = try {
-            packageManager.getPackageInfo(packageName, 0).versionName ?: "0.7.0"
+            packageManager.getPackageInfo(packageName, 0).versionName ?: "0.7.1"
         } catch (e: Exception) {
-            "0.7.0"
+            "0.7.1"
         }
         menuSheet = MenuSheet(
             this,
@@ -699,7 +710,7 @@ class MainActivity : ComponentActivity() {
 
     private fun showAbout() {
         val pkg = WebView.getCurrentWebViewPackage()
-        val info = "览 0.7.0 (10)\n" +
+        val info = "览 0.7.1 (11)\n" +
             "内核：系统 WebView（Chrome 内核 Blink + V8）\n" +
             "WebView：${pkg?.packageName ?: "未知"} ${pkg?.versionName ?: ""}\n" +
             "去广告：${if (Store.adBlockEnabled(this)) "开" else "关"}，" +
@@ -717,16 +728,53 @@ class MainActivity : ComponentActivity() {
         val lower = url.lowercase()
         if (lower.contains(".m3u8")) return true
         val path = lower.substringBefore("?").substringBefore("#")
-        return listOf(".mp4", ".webm", ".mov", ".m4v", ".flv", ".mkv", ".avi")
+        // .ts/.m4s 一律是 HLS 分片：也要认出来，才能记一笔“只抓到分片”而不是当没抓到
+        return listOf(".mp4", ".webm", ".mov", ".m4v", ".flv", ".mkv", ".avi", ".ts", ".m4s")
             .any { path.endsWith(it) }
     }
 
-    private fun addSniffed(tab: Tab, url: String, via: String) {
+    /** m3u8 播放列表：下载要走 HLS 合并，不能当单个文件下。 */
+    private fun isPlaylistUrl(url: String): Boolean = url.lowercase().contains(".m3u8")
+
+    private val segmentNameRe =
+        Regex("^(index|seg|chunk|segment|part|media)[-_]?\\d+\\.(mp4|ts|m4s)$", RegexOption.IGNORE_CASE)
+
+    /**
+     * 是不是 HLS 分片（单独下就是坏文件，例如 index-1.mp4 128KB 播不了）。
+     * 注意：B 站那种 43625612837-1-16.mp4 是完整直链，不算分片，别误杀。
+     */
+    private fun isSegmentUrl(url: String): Boolean {
+        val lower = url.lowercase()
+        val path = lower.substringBefore("?").substringBefore("#")
+        val name = path.substringAfterLast("/")
+        if (path.endsWith(".ts") || path.endsWith(".m4s")) return true
+        if (segmentNameRe.matches(name)) return true
+        if (name.contains("-seg") || name.contains("_seg")) return true
+        // hls 路径下的纯数字分片，例如 /hls/0.mp4、/hls/12.ts
+        if (path.contains("/hls/") && Regex("^\\d+\\.(mp4|ts|m4s)$").matches(name)) return true
+        return false
+    }
+
+    /**
+     * 0.7.1：分片不进可下载列表，只记一笔 segmentSeenByTab，下面的下载器入口
+     * 会据此提示“只抓到分片，没抓到 m3u8”，而不是把分片当整片下出坏文件。
+     * isPlayUrl：JS 钩子从播放接口 JSON 里抠出的 play_url——该站 play_url 就是
+     * m3u8，即使地址里没写 .m3u8 也按播放列表收；万一实际是直链 mp4，
+     * HlsDownloader 首包判断会改走整文件下载，不会拼坏。
+     */
+    private fun addSniffed(tab: Tab, url: String, via: String, isPlayUrl: Boolean = false) {
         if (!url.startsWith("http://") && !url.startsWith("https://")) return
+        val playlist = isPlaylistUrl(url) || isPlayUrl
+        if (!playlist && isSegmentUrl(url)) {
+            segmentSeenByTab[tab] = true
+            AppLog.i(this, "嗅探", "HLS 分片（不列出）：$via $url")
+            runOnUiThread { if (tab == activeTab) updateSniffBtn() }
+            return
+        }
         val list = sniffedByTab.getOrPut(tab) { mutableListOf() }
         synchronized(list) {
             if (list.none { it.url == url }) {
-                list.add(SniffedVideo(url, via))
+                list.add(SniffedVideo(url, via, -1, playlist, false))
                 AppLog.i(this, "嗅探", "抓到视频：$via $url")
                 if (list.size > 50) list.removeAt(0)
             } else return
@@ -734,8 +782,15 @@ class MainActivity : ComponentActivity() {
         runOnUiThread {
             updateSniffBtn()
             smartSheet?.refreshList()
+            downloaderSheet?.refreshList()
             maybeAutoOpenSmartPlayer()
         }
+    }
+
+    /** 本页视频：m3u8 播放列表永远排最前面，其余保持抓到顺序。 */
+    private fun sortedSniffed(tab: Tab): List<SniffedVideo> {
+        val list = sniffedByTab[tab].orEmpty()
+        return list.sortedByDescending { it.isPlaylist }
     }
 
     /** 此网站开了自动打开：本页第一次抓到视频就自动弹出智能播放器 */
@@ -751,7 +806,7 @@ class MainActivity : ComponentActivity() {
         if (smartSheet?.isShowing == true) return
         if (!Store.smartPlayerEnabled(this)) return
         if (!Store.autoOpenSiteEnabled(this, host)) return
-        val list = sniffedByTab[tab] ?: return
+        val list = sortedSniffed(tab)
         if (list.isEmpty()) return
         lastAutoOpenedPage = pageUrl
         openSmartPlayer(list.first(), Store.smartAutoplayEnabled(this))
@@ -788,9 +843,11 @@ class MainActivity : ComponentActivity() {
     private fun updateSniffBtn() {
         val tab = activeTab ?: return
         val count = sniffedByTab[tab]?.size ?: 0
+        val onlySegments = count == 0 && segmentSeenByTab[tab] == true
         val playing = videoPlayingByTab[tab] == true
-        if (count > 0 && playing) {
-            sniffBtn.text = "下载($count)"
+        // 只有分片时也露入口，点开会提示“没抓到 m3u8”，而不是悄悄消失
+        if ((count > 0 || onlySegments) && playing) {
+            sniffBtn.text = if (count > 0) "下载($count)" else "下载"
             sniffBtn.visibility = View.VISIBLE
         } else {
             sniffBtn.visibility = View.GONE
@@ -799,13 +856,21 @@ class MainActivity : ComponentActivity() {
 
     private fun showSniffDialog() {
         val tab = activeTab
-        val list = tab?.let { sniffedByTab[it] } ?: mutableListOf()
+        val list = tab?.let { sortedSniffed(it) } ?: emptyList()
         if (list.isEmpty()) {
-            Toast.makeText(
-                this,
-                "这页没抓到直接视频链接：部分网站用 blob 或加密流，抓不到",
-                Toast.LENGTH_LONG
-            ).show()
+            if (tab != null && segmentSeenByTab[tab] == true) {
+                Toast.makeText(
+                    this,
+                    "只抓到 HLS 分片，没抓到 m3u8 播放列表：等视频开始播、再点一次试试，分片不能单独下载",
+                    Toast.LENGTH_LONG
+                ).show()
+            } else {
+                Toast.makeText(
+                    this,
+                    "这页没抓到直接视频链接：部分网站用 blob 或加密流，抓不到",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
             return
         }
         // 智能播放器开着：直接进播放器（弹窗/全屏/悬浮按模式走），选视频在播放器列表里，不再经过这个旧弹窗
@@ -814,7 +879,7 @@ class MainActivity : ComponentActivity() {
             return
         }
         val names = list.map { v ->
-            val file = v.url.substringAfterLast("/").substringBefore("?").ifBlank { v.url }
+            val file = v.displayName()
             val host = try {
                 Uri.parse(v.url).host ?: ""
             } catch (e: Exception) {
@@ -836,7 +901,8 @@ class MainActivity : ComponentActivity() {
      * 播放模式是悬浮：进应用内悬浮小窗；否则进全屏原生播放器。
      */
     private fun openVideoPlayer(video: SniffedVideo) {
-        val title = video.url.substringAfterLast("/").substringBefore("?").ifBlank { "视频" }
+        val title = video.url.substringAfterLast("/").substringBefore("?")
+            .removeSuffix(".m3u8").ifBlank { "视频" }
         when (Store.playMode(this)) {
             "sheet" -> {
                 openSmartPlayer(video, true)
@@ -896,7 +962,7 @@ class MainActivity : ComponentActivity() {
         val sheet = SmartPlayerSheet(
             activity = this,
             container = container,
-            getVideos = { activeTab?.let { sniffedByTab[it]?.toList() } ?: emptyList() },
+            getVideos = { activeTab?.let { sortedSniffed(it) } ?: emptyList() },
             host = host,
             onFullscreen = { url, title, pos -> startPlayerActivity(url, title, pos) },
             onFloat = { url, title, pos -> showFloatingPlayer(url, title, pos) },
@@ -908,7 +974,35 @@ class MainActivity : ComponentActivity() {
         sheet.show(initial, autoplay)
     }
 
+    /**
+     * 0.7.1 下载分流：m3u8 播放列表走 HLS 合并下载（拉全部分片拼接成完整文件），
+     * 普通直链仍走 DownloadManager。文件名取页面标题，不再用 index-1.mp4 这类分片名。
+     * 注意：不做 UA 伪装——该站 App 也是同一套 HLS，改 UA 拿不到整片 mp4。
+     */
     private fun downloadVideo(url: String) {
+        val tab = activeTab
+        val video = tab?.let { sniffedByTab[it]?.find { v -> v.url == url } }
+        if (video?.isPlaylist == true || isPlaylistUrl(url)) {
+            val wv = tab?.webView
+            val referer = wv?.url ?: tab?.url
+            val ua = try {
+                wv?.settings?.userAgentString
+            } catch (e: Exception) {
+                null
+            }
+            val cookie = try {
+                CookieManager.getInstance().getCookie(url)
+            } catch (e: Exception) {
+                null
+            }
+            val titleHint = try {
+                wv?.title ?: tab?.title ?: ""
+            } catch (e: Exception) {
+                ""
+            }
+            HlsDownloader.download(this, url, referer, ua, cookie, titleHint)
+            return
+        }
         try {
             val fileName = URLUtil.guessFileName(url, null, "video/mp4")
             val request = DownloadManager.Request(Uri.parse(url))
@@ -1196,21 +1290,8 @@ class MainActivity : ComponentActivity() {
             .setTitle(video.url.substringAfterLast("/").substringBefore("?"))
             .setItems(actions) { _, which ->
                 when (which) {
-                    0 -> {
-                        try {
-                            val fileName = android.webkit.URLUtil.guessFileName(video.url, null, "video/mp4")
-                            val request = android.app.DownloadManager.Request(Uri.parse(video.url))
-                                .setTitle(fileName)
-                                .setNotificationVisibility(android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                                .setDestinationInExternalPublicDir(
-                                    android.os.Environment.DIRECTORY_DOWNLOADS, fileName
-                                )
-                            (getSystemService(DOWNLOAD_SERVICE) as android.app.DownloadManager).enqueue(request)
-                            Toast.makeText(this, "开始下载", Toast.LENGTH_SHORT).show()
-                        } catch (e: Exception) {
-                            Toast.makeText(this, "下载失败：${e.message}", Toast.LENGTH_SHORT).show()
-                        }
-                    }
+                    // 0.7.1：收敛到 downloadVideo，m3u8 自动走合并下载，不再直接下单个文件
+                    0 -> downloadVideo(video.url)
                     1 -> {
                         val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
                         cm.setPrimaryClip(android.content.ClipData.newPlainText("视频链接", video.url))
@@ -1294,7 +1375,7 @@ class MainActivity : ComponentActivity() {
         }
 
         @android.webkit.JavascriptInterface
-        fun version(): String = "0.7.0 (10)"
+        fun version(): String = "0.7.1 (11)"
 
         @android.webkit.JavascriptInterface
         fun searchEngine(): String = Store.searchEngine(this@MainActivity)
@@ -1315,6 +1396,69 @@ class MainActivity : ComponentActivity() {
                 startActivity(Intent(this@MainActivity, ExtensionsActivity::class.java))
             }
         }
+    }
+
+    /**
+     * 0.7.1 嗅探桥：JS 钩子把 fetch/XHR 里出现的视频地址报回来。
+     * 只收 http(s) 视频地址，其它一律丢掉；onPlayUrl 专收播放接口 JSON 里的 play_url。
+     */
+    inner class SniffBridge(private val wv: WebView) {
+        @android.webkit.JavascriptInterface
+        fun onUrl(url: String) {
+            reportSniffed(wv, url, "fetch/XHR", false)
+        }
+
+        @android.webkit.JavascriptInterface
+        fun onPlayUrl(url: String) {
+            reportSniffed(wv, url, "播放接口", true)
+        }
+    }
+
+    private fun reportSniffed(wv: WebView, rawUrl: String, via: String, isPlayUrl: Boolean) {
+        val tab = tabs.find { it.webView == wv } ?: return
+        val resolved = resolveSniffedUrl(wv.url, rawUrl) ?: return
+        if (!isVideoUrl(resolved) && !isPlayUrl) return
+        // addSniffed 自己会做分片过滤与去重；这里只做线程无关的转发
+        addSniffed(tab, resolved, via, isPlayUrl)
+    }
+
+    /** 相对地址按当前页解析；blob:/data: 不是可下载地址，直接丢掉。 */
+    private fun resolveSniffedUrl(base: String?, raw: String): String? {
+        val u = raw.trim()
+        if (u.isEmpty()) return null
+        if (u.startsWith("http://") || u.startsWith("https://")) return u
+        if (u.startsWith("//")) return "https:$u"
+        if (u.startsWith("blob:") || u.startsWith("data:")) return null
+        if (base.isNullOrBlank()) return null
+        return try {
+            URL(URL(base), u).toString()
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * 0.7.1 注入 fetch/XHR 钩子：拦截层（shouldInterceptRequest）能看到资源请求，
+     * 但看不到响应体——该站 play_url 是 POST /api/v2/vod/playurl 的 JSON 响应体
+     * 里回的，不钩 XHR 就抓不到 m3u8；钩子只扫 JSON/文本响应，不碰二进制分片。
+     * 跨域 iframe 里钩不到（主 frame 的 JS 够不着 iframe），那部分靠拦截层兜底。
+     */
+    private fun injectSniffHook(view: WebView) {
+        view.evaluateJavascript(
+            """(function(){if(window.__lanSniffHook)return;window.__lanSniffHook=true;
+function report(u,isPlay){try{if(!u||typeof u!=='string')return;if(window.LanSniff){if(isPlay){window.LanSniff.onPlayUrl(u);}else{window.LanSniff.onUrl(u);}}}catch(e){}}
+function isVid(u){return /\.m3u8(\?|#|$)/i.test(u)||/\.ts(\?|#|$)/i.test(u)||/\.m4s(\?|#|$)/i.test(u)||/index-\d+\.mp4/i.test(u)||/\.mp4(\?|#|$)/i.test(u);}
+function check(u){try{if(!u)return;var s=typeof u==='string'?u:(u.url||'');if(s&&isVid(s))report(s,false);}catch(e){}}
+function scanText(t){if(!t||typeof t!=='string')return;var re=/(https?:\/\/[^\s"'<>\\]+?\.m3u8(?:[?#][^\s"'<>\\]*)?)/g,m;while((m=re.exec(t))!==null){report(m[1],false);}var p=/"play_url"\s*:\s*"([^"\\]+)"/g;while((m=p.exec(t))!==null){report(m[1].replace(/\\/g,''),true);}}
+function maybeScan(url,text){try{if(!text)return;var u=String(url||'');if(u.indexOf('playurl')>=0||u.indexOf('.m3u8')>=0||text.indexOf('#EXTM3U')>=0||text.indexOf('.m3u8')>=0||text.indexOf('play_url')>=0){scanText(text);}}catch(e){}}
+try{if(window.fetch){var of=window.fetch;window.fetch=function(){var a=arguments;try{check(a[0]);}catch(e){}return of.apply(this,a).then(function(res){try{var ct='';try{ct=res.headers.get('content-type')||'';}catch(e){}var u=res.url||'';if(/json|text|mpegurl/i.test(ct)||u.indexOf('playurl')>=0||u.indexOf('.m3u8')>=0){var c=res.clone();c.text().then(function(t){maybeScan(u,t);}).catch(function(){});}}catch(e){}return res;});}}}catch(e){}
+try{var oo=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(m,u){try{this.__lanUrl=u;check(u);}catch(e){}return oo.apply(this,arguments);};var os=XMLHttpRequest.prototype.send;XMLHttpRequest.prototype.send=function(){var x=this;try{x.addEventListener('load',function(){try{var t=x.responseText;if(typeof t==='string')maybeScan(x.responseURL||x.__lanUrl,t);}catch(e){}});}catch(e){}return os.apply(this,arguments);};}catch(e){}
+function scanVideos(){try{var vs=document.querySelectorAll('video');for(var i=0;i<vs.length;i++){var s=vs[i].currentSrc||vs[i].src;if(s)check(s);}}catch(e){}}
+scanVideos();
+try{if(window.MutationObserver){new MutationObserver(function(ms){ms.forEach(function(m){m.addedNodes.forEach(function(n){if(!n)return;if(n.tagName==='VIDEO'){var s=n.currentSrc||n.src;if(s)check(s);}if(n.querySelectorAll){var vs=n.querySelectorAll('video');for(var i=0;i<vs.length;i++){var s2=vs[i].currentSrc||vs[i].src;if(s2)check(s2);}}});});}).observe(document.documentElement,{childList:true,subtree:true});}}catch(e){}
+})();""",
+            null
+        )
     }
 
     /** 视频播放状态桥：页面里 <video> 一播/一停就上报，桥实例绑在自己的 WebView 上 */
@@ -1346,16 +1490,24 @@ class MainActivity : ComponentActivity() {
     /** 智能下载器入口：玻璃卡片弹窗，列本页视频 */
     private fun openDownloader() {
         val tab = activeTab ?: return
-        val list = sniffedByTab[tab].orEmpty()
+        val list = sortedSniffed(tab)
         if (list.isEmpty()) {
-            Toast.makeText(this, "这页没抓到可下载的视频", Toast.LENGTH_SHORT).show()
+            if (segmentSeenByTab[tab] == true) {
+                Toast.makeText(
+                    this,
+                    "只抓到 HLS 分片，没抓到 m3u8 播放列表：等视频开始播、再点一次试试，分片不能单独下载",
+                    Toast.LENGTH_LONG
+                ).show()
+            } else {
+                Toast.makeText(this, "这页没抓到可下载的视频", Toast.LENGTH_SHORT).show()
+            }
             return
         }
         downloaderSheet?.dismiss()
         downloaderSheet = SmartDownloaderSheet(
             this,
             container,
-            getVideos = { sniffedByTab[activeTab].orEmpty() },
+            getVideos = { activeTab?.let { sortedSniffed(it) } ?: emptyList() },
             onDownload = { url -> downloadVideo(url) },
             onPlay = { video ->
                 downloaderSheet?.dismiss()

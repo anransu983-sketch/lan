@@ -19,6 +19,7 @@ import android.view.TextureView
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.webkit.CookieManager
 import android.webkit.URLUtil
 import android.widget.Button
 import android.widget.FrameLayout
@@ -474,6 +475,16 @@ class VideoPlayerActivity : ComponentActivity(), TextureView.SurfaceTextureListe
     }
 
     private fun downloadCurrent() {
+        // 0.7.1：当前播的是 m3u8 时走 HLS 合并下载，别把播放列表文本当视频下下来
+        if (url.contains(".m3u8", ignoreCase = true)) {
+            val cookie = try {
+                CookieManager.getInstance().getCookie(url)
+            } catch (e: Exception) {
+                null
+            }
+            HlsDownloader.download(this, url, null, null, cookie, title)
+            return
+        }
         try {
             val fileName = URLUtil.guessFileName(url, null, "video/mp4")
             val request = DownloadManager.Request(Uri.parse(url))

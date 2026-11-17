@@ -498,13 +498,14 @@ class SmartPlayerSheet(
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             }
             val name = TextView(activity).apply {
-                text = v.url.substringAfterLast("/").substringBefore("?").ifBlank { v.url }
+                text = v.displayName()
                 textSize = 14f
                 setTextColor(0xFF111111.toInt())
                 maxLines = 2
             }
             val meta = TextView(activity).apply {
-                text = "${v.via} · ${formatSize(v.sizeBytes)}"
+                text = if (v.isPlaylist) "${v.via} · m3u8 合并下载"
+                else "${v.via} · ${formatSize(v.sizeBytes)}"
                 textSize = 12f
                 setTextColor(0xFF9CA3AF.toInt())
                 setPadding(0, dp(2), 0, 0)
@@ -525,17 +526,21 @@ class SmartPlayerSheet(
     }
 
     private fun sortedVideos(): List<SniffedVideo> {
-        val list = getVideos()
+        // 0.7.1：m3u8 播放列表永远排最前面
+        val list = getVideos().sortedByDescending { it.isPlaylist }
         return if (sortMode == "size") {
-            list.sortedWith(compareByDescending<SniffedVideo> { it.sizeBytes >= 0 }.thenByDescending { it.sizeBytes })
+            list.sortedWith(
+                compareByDescending<SniffedVideo> { it.isPlaylist }
+                    .thenByDescending { it.sizeBytes >= 0 }.thenByDescending { it.sizeBytes }
+            )
         } else {
             list
         }
     }
 
-    /** 没测过大小的，HEAD 测 Content-Length，回来刷新列表 */
+    /** 没测过大小的，HEAD 测 Content-Length，回来刷新列表（m3u8 不测，列表大小无意义） */
     private fun fetchSizes() {
-        val pending = getVideos().filter { it.sizeBytes < 0 }
+        val pending = getVideos().filter { it.sizeBytes < 0 && !it.isPlaylist }
         if (pending.isEmpty()) return
         Thread {
             for (v in pending) {
@@ -596,7 +601,8 @@ class SmartPlayerSheet(
 
     private fun playVideo(video: SniffedVideo, autoplay: Boolean) {
         currentVideo = video
-        currentTitle = video.url.substringAfterLast("/").substringBefore("?").ifBlank { "视频" }
+        currentTitle = video.url.substringAfterLast("/").substringBefore("?")
+            .removeSuffix(".m3u8").ifBlank { "视频" }
         titleView?.text = "智能播放器-$currentTitle"
         playOnPrepared = autoplay
         durationMs = 0
